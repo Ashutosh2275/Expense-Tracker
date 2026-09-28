@@ -20,7 +20,6 @@
     -moz-osx-font-smoothing: grayscale;
     -webkit-tap-highlight-color: transparent;
     touch-action: manipulation;
-    overflow-x: hidden;
   }
 
   #root {
@@ -28,6 +27,7 @@
     min-height: 100dvh;
     display: flex;
     flex-direction: column;
+    overflow-x: clip;
   }
 
   /* Support keyboard viewport adjustments on mobile iOS Safari */
@@ -47,17 +47,15 @@
 
 /* iOS Dynamic Island & Status Bar Header Clearance */
 .pt-ios-header {
-  padding-top: calc(max(env(safe-area-inset-top, 0px), 48px) + 0.75rem);
+  padding-top: max(env(safe-area-inset-top, 0px), 0.75rem);
   -webkit-transform: translateZ(0);
   transform: translateZ(0);
   -webkit-backface-visibility: hidden;
   backface-visibility: hidden;
-  will-change: transform;
 }
 
 @media (min-width: 640px) {
   .pt-ios-header {
-    padding-top: 1rem;
-    will-change: auto;
+    padding-top: 0.875rem;
   }
 }

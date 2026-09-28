@@ -446,7 +446,7 @@ export const SinglePageApp: React.FC = () => {
       }}
     >
       {/* Top Header with iOS Dynamic Island & Status Bar safe padding */}
-      <header className="sticky top-0 z-30 bg-white border-b border-slate-200/80 px-4 sm:px-6 pb-3.5 shadow-xs transition-colors pt-ios-header">
+      <header className="sticky top-0 z-40 bg-white border-b border-slate-200/80 px-4 sm:px-6 pb-3.5 shadow-xs transition-colors pt-ios-header">
         <div className="max-w-xl mx-auto flex items-center justify-between">
           {/* Clickable Profile & Account Trigger */}
           <button
@@ -576,14 +576,27 @@ export const SinglePageApp: React.FC = () => {
 
           {friends.length > 0 ? (
             <div className="space-y-2.5">
-              {friends.map((friend) => {
-                const isOwedToYou = friend.balance > 0;
-                const isYouOwe = friend.balance < 0;
-                const isSettled = friend.balance === 0;
-                const isExpanded = expandedFriendId === friend.id;
-                const validEntries = (friend.pendingEntries || []).filter((e) => toPaise(e.remainingAmount) > 0);
-                // Latest one at the first (top), oldest one at the last (bottom)
-                const displayEntries = [...validEntries].reverse();
+              {[...friends]
+                .sort((a, b) => {
+                  const amountA = Math.abs(Number(a.balance || 0));
+                  const amountB = Math.abs(Number(b.balance || 0));
+                  if (amountB !== amountA) {
+                    return amountB - amountA; // Highest amount at the top
+                  }
+                  return new Date(b.updatedAt || 0).getTime() - new Date(a.updatedAt || 0).getTime();
+                })
+                .map((friend) => {
+                  const isOwedToYou = friend.balance > 0;
+                  const isYouOwe = friend.balance < 0;
+                  const isSettled = friend.balance === 0;
+                  const isExpanded = expandedFriendId === friend.id;
+                  const validEntries = (friend.pendingEntries || []).filter((e) => toPaise(e.remainingAmount) > 0);
+                  // Sort individual pending entries amount-wise descending (highest amount on top)
+                  const displayEntries = [...validEntries].sort((a, b) => {
+                    const diff = Number(b.remainingAmount || 0) - Number(a.remainingAmount || 0);
+                    if (diff !== 0) return diff;
+                    return new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime();
+                  });
 
                 return (
                   <div
