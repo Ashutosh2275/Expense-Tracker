@@ -409,7 +409,7 @@ export const SinglePageApp: React.FC = () => {
       }}
     >
       {/* Top Header with iOS Dynamic Island & Status Bar safe padding */}
-      <header className="sticky top-0 z-30 bg-white border-b border-slate-200/80 px-4 sm:px-6 pb-3.5 shadow-xs transition-all pt-ios-header">
+      <header className="sticky top-0 z-30 bg-white border-b border-slate-200/80 px-4 sm:px-6 pb-3.5 shadow-xs transition-colors pt-ios-header">
         <div className="max-w-xl mx-auto flex items-center justify-between">
           {/* Clickable Profile & Account Trigger */}
           <button

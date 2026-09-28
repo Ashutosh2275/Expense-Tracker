@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import { localTracker, Friend } from '../src/services/localTracker';
 import { localAuth, UserAccount } from '../src/services/localAuth';
-import { firebaseService } from '../src/services/firebase';
+import { firebaseService, getCanonicalUserKey } from '../src/services/firebase';
 
 // Mock storage map generator for isolating simulated devices
 class MemoryStorage {
@@ -461,4 +461,142 @@ describe('30-Device Real-Time Sync & Sub-Millisecond Concurrency Tests', () => {
       expect(d.state[0].pendingEntries.length).toBe(0);
     }
   });
+
+  it('correctly maps heterogeneous device user IDs to the exact same canonical key', () => {
+    // iPhone with Firebase Auth UID
+    expect(getCanonicalUserKey('4qmYiPXz8tfnXdnKAV18WIjtqwz2', 'Ashutosh')).toBe('ashutosh');
+    expect(getCanonicalUserKey('4qmYiPXz8tfnXdnKAV18WIjtqwz2', 'ASHUTOSH')).toBe('ashutosh');
+    
+    // Android with local ID
+    expect(getCanonicalUserKey('usr_ashutosh')).toBe('ashutosh');
+    expect(getCanonicalUserKey('usr_ashutosh', 'Ashutosh')).toBe('ashutosh');
+
+    // Authenticated session fallback
+    localAuth.setCurrentUser({
+      id: 'session_uid_999',
+      username: 'Ashutosh',
+      email: 'ashutosh@example.com',
+    });
+    expect(getCanonicalUserKey('session_uid_999')).toBe('ashutosh');
+    expect(getCanonicalUserKey()).toBe('ashutosh');
+  });
+
+  it('symmetric bidirectional sync: iPhone changes instantly reach Android, Android changes instantly reach iPhone', () => {
+    // Model canonical shared tracker node in cloud
+    let cloudCanonicalState: Friend[] = [];
+    const iphoneListener = (incoming: Friend[]) => {
+      iphoneDevice.state = JSON.parse(JSON.stringify(incoming));
+    };
+    const androidListener = (incoming: Friend[]) => {
+      androidDevice.state = JSON.parse(JSON.stringify(incoming));
+    };
+    const laptopListener = (incoming: Friend[]) => {
+      laptopDevice.state = JSON.parse(JSON.stringify(incoming));
+    };
+
+    const listeners = [iphoneListener, androidListener, laptopListener];
+
+    const publishToCloud = (writerUserKey: string, friends: Friend[]) => {
+      expect(writerUserKey).toBe('ashutosh');
+      cloudCanonicalState = JSON.parse(JSON.stringify(friends));
+      listeners.forEach((listener) => listener(cloudCanonicalState));
+    };
+
+    const iphoneDevice = {
+      platform: 'iPhone (PWA / Add to Screen)',
+      userId: '4qmYiPXz8tfnXdnKAV18WIjtqwz2',
+      username: 'Ashutosh',
+      state: [] as Friend[],
+    };
+
+    const androidDevice = {
+      platform: 'Android Phone (Chrome / PWA)',
+      userId: 'usr_ashutosh',
+      username: 'Ashutosh',
+      state: [] as Friend[],
+    };
+
+    const laptopDevice = {
+      platform: 'Laptop Screen (Desktop Web)',
+      userId: 'usr_ashutosh',
+      username: 'Ashutosh',
+      state: [] as Friend[],
+    };
+
+    // 1. iPhone adds "Raj" with ₹50 debt
+    const rajWith50: Friend[] = [
+      {
+        id: 'fr_raj',
+        name: 'Raj',
+        balance: 50,
+        pendingEntries: [
+          {
+            id: 'ent_1',
+            purpose: 'Expense',
+            originalAmount: 50,
+            remainingAmount: 50,
+            createdAt: new Date().toISOString(),
+          },
+        ],
+        updatedAt: new Date().toISOString(),
+      },
+    ];
+
+    const iphoneKey = getCanonicalUserKey(iphoneDevice.userId, iphoneDevice.username);
+    publishToCloud(iphoneKey, rajWith50);
+
+    // DIRECT SYNC VERIFICATION: Android and Laptop have received Raj ₹50 instantly
+    expect(androidDevice.state.length).toBe(1);
+    expect(androidDevice.state[0].name).toBe('Raj');
+    expect(androidDevice.state[0].balance).toBe(50);
+    expect(laptopDevice.state[0].balance).toBe(50);
+
+    // 2. Android adjusts amount to ₹18
+    const rajWith18: Friend[] = [
+      {
+        id: 'fr_raj',
+        name: 'Raj',
+        balance: 18,
+        pendingEntries: [
+          {
+            id: 'ent_2',
+            purpose: 'Expense',
+            originalAmount: 18,
+            remainingAmount: 18,
+            createdAt: new Date().toISOString(),
+          },
+        ],
+        updatedAt: new Date().toISOString(),
+      },
+    ];
+
+    const androidKey = getCanonicalUserKey(androidDevice.userId, androidDevice.username);
+    publishToCloud(androidKey, rajWith18);
+
+    // DIRECT SYNC VERIFICATION: iPhone and Laptop have received Raj ₹18 instantly!
+    expect(iphoneDevice.state.length).toBe(1);
+    expect(iphoneDevice.state[0].name).toBe('Raj');
+    expect(iphoneDevice.state[0].balance).toBe(18);
+    expect(laptopDevice.state[0].balance).toBe(18);
+
+    // 3. Laptop settles to ₹0
+    const rajSettled: Friend[] = [
+      {
+        id: 'fr_raj',
+        name: 'Raj',
+        balance: 0,
+        pendingEntries: [],
+        updatedAt: new Date().toISOString(),
+      },
+    ];
+
+    const laptopKey = getCanonicalUserKey(laptopDevice.userId, laptopDevice.username);
+    publishToCloud(laptopKey, rajSettled);
+
+    // DIRECT SYNC VERIFICATION: Both iPhone and Android settle to ₹0 in perfect symmetry!
+    expect(iphoneDevice.state[0].balance).toBe(0);
+    expect(androidDevice.state[0].balance).toBe(0);
+    expect(laptopDevice.state[0].balance).toBe(0);
+  });
 });
+

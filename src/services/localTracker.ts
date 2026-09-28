@@ -1,5 +1,6 @@
 import { toPaise, fromPaise } from '@/utils/currency';
 import { firebaseService } from './firebase';
+import { localAuth } from './localAuth';
 
 export interface DeductRecord {
   id: string;
@@ -87,7 +88,11 @@ export const localTracker = {
 
   saveFriends(userId: string, friends: Friend[], username?: string): void {
     this.saveFriendsLocalOnly(userId, friends);
-    firebaseService.syncFriends(userId, friends, username).catch(() => {});
+    const resolvedUsername =
+      username ||
+      (userId.startsWith('usr_') ? userId.replace(/^usr_/, '') : undefined) ||
+      localAuth.getCurrentUser()?.username;
+    firebaseService.syncFriends(userId, friends, resolvedUsername).catch(() => {});
   },
 
   addFriend(userId: string, name: string, initialBalance: number = 0, initialPurpose?: string): Friend {

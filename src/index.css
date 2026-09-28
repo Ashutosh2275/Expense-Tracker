@@ -47,11 +47,17 @@
 
 /* iOS Dynamic Island & Status Bar Header Clearance */
 .pt-ios-header {
-  padding-top: calc(max(env(safe-area-inset-top, 0px), 54px) + 1.25rem);
+  padding-top: calc(max(env(safe-area-inset-top, 0px), 48px) + 0.75rem);
+  -webkit-transform: translateZ(0);
+  transform: translateZ(0);
+  -webkit-backface-visibility: hidden;
+  backface-visibility: hidden;
+  will-change: transform;
 }
 
 @media (min-width: 640px) {
   .pt-ios-header {
     padding-top: 1rem;
+    will-change: auto;
   }
 }
