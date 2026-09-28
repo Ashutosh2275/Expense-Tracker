@@ -1,0 +1,16 @@
+{
+  "rules": {
+    "users": {
+      "$uid": {
+        ".read": true,
+        ".write": true
+      }
+    },
+    "usernames": {
+      ".read": true,
+      ".write": true
+    },
+    ".read": false,
+    ".write": false
+  }
+}
