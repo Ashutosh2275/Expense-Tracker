@@ -87,9 +87,9 @@ export const SinglePageApp: React.FC = () => {
     setCurrentUser(user);
     loadFriends(user.id);
 
-    // Real-time synchronization from cloud Firestore
+    // Real-time synchronization from cloud Realtime Database
     const unsubscribe = firebaseService.subscribeFriends(user.id, (cloudFriends) => {
-      if (cloudFriends && Array.isArray(cloudFriends)) {
+      if (cloudFriends) {
         localTracker.saveFriendsLocalOnly(user.id, cloudFriends);
         setFriends(cloudFriends);
       }
@@ -101,16 +101,16 @@ export const SinglePageApp: React.FC = () => {
   }, [navigate]);
 
   const loadFriends = async (userId: string) => {
+    // 1. Instant local render (0ms)
     const list = localTracker.getFriends(userId);
     setFriends(list);
 
+    // 2. Fetch fresh cloud state
     try {
       const cloudFriends = await firebaseService.loadFriendsFromCloud(userId);
-      if (cloudFriends && cloudFriends.length > 0) {
-        if (list.length === 0) {
-          localTracker.saveFriendsLocalOnly(userId, cloudFriends);
-          setFriends(cloudFriends);
-        }
+      if (cloudFriends) {
+        localTracker.saveFriendsLocalOnly(userId, cloudFriends);
+        setFriends(cloudFriends);
       }
     } catch {
       // offline fallback

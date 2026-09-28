@@ -17,17 +17,8 @@ import {
   onValue,
   type Database,
 } from 'firebase/database';
-import {
-  getFirestore,
-  setLogLevel,
-  doc,
-  setDoc,
-  getDoc,
-  onSnapshot,
-  type Firestore,
-} from 'firebase/firestore';
 import { localAuth, type UserAccount, toTitleCase } from './localAuth';
-import type { Friend } from './localTracker';
+import type { Friend, PendingEntry, DeductRecord, PaymentLog } from './localTracker';
 
 const firebaseConfig = {
   apiKey: import.meta.env.VITE_FIREBASE_API_KEY || '',
@@ -43,7 +34,6 @@ const firebaseConfig = {
 let app: FirebaseApp | null = null;
 let auth: Auth | null = null;
 let rtdb: Database | null = null;
-let db: Firestore | null = null;
 
 const hasConfig =
   Boolean(firebaseConfig.apiKey) &&
@@ -59,19 +49,13 @@ if (hasConfig) {
     } catch {
       // ignore
     }
-    try {
-      setLogLevel('silent');
-      db = getFirestore(app);
-    } catch {
-      // ignore
-    }
   } catch (err) {
     console.warn('Firebase initialization warning:', err);
   }
 }
 
-// Helper to prevent any Firestore call from hanging indefinitely if database is not created or client is offline
-function withTimeout<T>(promise: Promise<T>, ms: number, fallbackValue: T): Promise<T> {
+// Helper for lightning-fast network timeouts without hanging
+function withTimeout<T>(promise: Promise<T>, ms = 1500, fallbackValue: T): Promise<T> {
   return new Promise((resolve) => {
     const timer = setTimeout(() => resolve(fallbackValue), ms);
     promise
@@ -86,6 +70,69 @@ function withTimeout<T>(promise: Promise<T>, ms: number, fallbackValue: T): Prom
   });
 }
 
+/**
+ * Normalizes Firebase Realtime Database structures.
+ * RTDB serializes lists with numeric keys as objects (e.g. { '0': item, '1': item }).
+ * This converts all nested objects back into clean typed arrays for instant, crash-free React rendering.
+ */
+export function normalizeFriends(raw: unknown): Friend[] {
+  if (!raw) return [];
+  let list: unknown[] = [];
+  if (Array.isArray(raw)) {
+    list = raw;
+  } else if (typeof raw === 'object' && raw !== null) {
+    list = Object.values(raw);
+  }
+
+  return list
+    .filter((f): f is Record<string, unknown> => typeof f === 'object' && f !== null && 'id' in f && 'name' in f)
+    .map((f) => {
+      let pending: unknown[] = [];
+      const rawEntries = f.pendingEntries;
+      if (Array.isArray(rawEntries)) {
+        pending = rawEntries;
+      } else if (typeof rawEntries === 'object' && rawEntries !== null) {
+        pending = Object.values(rawEntries);
+      }
+
+      const cleanPending: PendingEntry[] = pending
+        .filter((e): e is Record<string, unknown> => typeof e === 'object' && e !== null && 'id' in e)
+        .map((e) => {
+          let deductions: DeductRecord[] = [];
+          if (Array.isArray(e.deductions)) {
+            deductions = e.deductions as DeductRecord[];
+          } else if (typeof e.deductions === 'object' && e.deductions !== null) {
+            deductions = Object.values(e.deductions) as DeductRecord[];
+          }
+          return {
+            id: String(e.id),
+            purpose: String(e.purpose || ''),
+            originalAmount: Number(e.originalAmount || 0),
+            remainingAmount: Number(e.remainingAmount || 0),
+            createdAt: String(e.createdAt || new Date().toISOString()),
+            deductions,
+          };
+        });
+
+      let logs: PaymentLog[] = [];
+      const rawLogs = f.paymentLogs;
+      if (Array.isArray(rawLogs)) {
+        logs = rawLogs as PaymentLog[];
+      } else if (typeof rawLogs === 'object' && rawLogs !== null) {
+        logs = Object.values(rawLogs) as PaymentLog[];
+      }
+
+      return {
+        id: String(f.id),
+        name: String(f.name),
+        balance: Number(f.balance || 0),
+        pendingEntries: cleanPending,
+        paymentLogs: logs,
+        updatedAt: String(f.updatedAt || new Date().toISOString()),
+      };
+    });
+}
+
 export const firebaseService = {
   isConfigured(): boolean {
     return Boolean(auth);
@@ -93,26 +140,28 @@ export const firebaseService = {
 
   /**
    * Register a new user with Username, Email, and Password.
-   * Saves to localAuth immediately and syncs with Firebase Auth + Firestore.
+   * Runs uniqueness point checks in parallel for millisecond-level responsiveness.
    */
   async register(username: string, email: string, password: string): Promise<UserAccount> {
     const formattedUsername = toTitleCase(username.trim());
     const cleanEmail = email.trim().toLowerCase();
 
-    // 1. Strict unique check on BOTH Username and Email
+    // 1. Strict unique check on BOTH Username and Email in PARALLEL
     if (rtdb) {
       const sanitized = cleanEmail.replace(/\./g, ',');
-      const emailSnap = await withTimeout(get(ref(rtdb, `emails/${sanitized}`)), 2000, null);
+      const [emailSnap, userSnap] = await Promise.all([
+        withTimeout(get(ref(rtdb, `emails/${sanitized}`)), 1500, null),
+        withTimeout(get(ref(rtdb, `usernames/${formattedUsername.toLowerCase()}`)), 1500, null),
+      ]);
+
       if (emailSnap && emailSnap.exists()) {
         throw new Error('This email address is already registered. Please sign in or use another email.');
       }
-      const userSnap = await withTimeout(get(ref(rtdb, `usernames/${formattedUsername.toLowerCase()}`)), 2000, null);
       if (userSnap && userSnap.exists()) {
         throw new Error('This username is already taken. Please choose another username.');
       }
 
-      // Neither exists in the cloud database.
-      // Purge any stale orphaned local storage accounts with this username or email from before a database reset.
+      // Purge any stale orphaned local storage accounts from prior resets
       const localUsers = localAuth.getStoredUsers();
       const cleaned = localUsers.filter(
         (u) =>
@@ -133,7 +182,7 @@ export const firebaseService = {
       }
     }
 
-    // 2. If Firebase Auth is configured, register in cloud FIRST
+    // 2. Register with Firebase Auth FIRST
     if (this.isConfigured() && auth) {
       let user;
       try {
@@ -142,8 +191,7 @@ export const firebaseService = {
       } catch (authErr: unknown) {
         const errObj = authErr as { code?: string; message?: string };
         if (errObj?.code === 'auth/email-already-in-use') {
-          // If the account already exists in Firebase Auth (e.g. survived a database wipe),
-          // attempt sign-in with this password to verify account ownership.
+          // If the account already exists in Firebase Auth, verify ownership with entered password
           try {
             const signInCred = await signInWithEmailAndPassword(auth, cleanEmail, password);
             user = signInCred.user;
@@ -158,7 +206,7 @@ export const firebaseService = {
       if (user) {
         await updateProfile(user, { displayName: formattedUsername }).catch(() => {});
 
-        // Sync profile to Realtime Database and Firestore
+        // Save profile and fast lookup indexes in parallel
         const profilePayload = {
           uid: user.uid,
           username: formattedUsername,
@@ -169,45 +217,22 @@ export const firebaseService = {
 
         if (rtdb) {
           const sanitizedEmail = cleanEmail.replace(/\./g, ',');
-          withTimeout(
-            Promise.all([
-              set(ref(rtdb, `users/${user.uid}/profile`), profilePayload),
-              set(ref(rtdb, `emails/${sanitizedEmail}`), {
-                uid: user.uid,
-                email: cleanEmail,
-                username: formattedUsername,
-              }),
-              set(ref(rtdb, `usernames/${formattedUsername.toLowerCase()}`), {
-                uid: user.uid,
-                email: cleanEmail,
-                username: formattedUsername,
-              }),
-            ]),
-            4000,
-            null
-          ).catch(() => {});
+          Promise.all([
+            set(ref(rtdb, `users/${user.uid}/profile`), profilePayload),
+            set(ref(rtdb, `emails/${sanitizedEmail}`), {
+              uid: user.uid,
+              email: cleanEmail,
+              username: formattedUsername,
+            }),
+            set(ref(rtdb, `usernames/${formattedUsername.toLowerCase()}`), {
+              uid: user.uid,
+              email: cleanEmail,
+              username: formattedUsername,
+            }),
+          ]).catch(() => {});
         }
 
-        if (db) {
-          withTimeout(
-            Promise.all([
-              setDoc(doc(db, 'users', user.uid), profilePayload, { merge: true }),
-              setDoc(
-                doc(db, 'usernames', formattedUsername.toLowerCase()),
-                {
-                  uid: user.uid,
-                  email: cleanEmail,
-                  username: formattedUsername,
-                },
-                { merge: true }
-              ),
-            ]),
-            4000,
-            null
-          ).catch(() => {});
-        }
-
-        // Clean any stale local entries and record verified account
+        // Clean stale local storage entries & set session
         const localUsers = localAuth
           .getStoredUsers()
           .filter(
@@ -234,13 +259,13 @@ export const firebaseService = {
   },
 
   /**
-   * Login with Username and Password.
+   * Ultra-fast login with Username or Email and Password.
+   * Uses O(1) point-lookup on usernames index for instant resolution.
    */
   async login(usernameOrEmail: string, password: string): Promise<UserAccount> {
     const cleanInput = usernameOrEmail.trim();
 
-    // Check local accounts first for instant username-to-email resolution
-    // Check local accounts first for instant username-to-email resolution
+    // Check local accounts first for instantaneous (0ms) resolution
     const localUsers = localAuth.getStoredUsers();
     let localMatch: UserAccount | undefined;
     if (cleanInput.includes('@')) {
@@ -265,47 +290,16 @@ export const firebaseService = {
         if (localMatch?.email) {
           emailToUse = localMatch.email;
         } else {
-          // Look up username in Realtime Database
+          // Point lookup on usernames index in RTDB (~20-50ms)
           let foundEmail = '';
           if (rtdb) {
-            const usersSnap = await withTimeout(get(ref(rtdb, 'users')), 2500, null);
-            if (usersSnap && usersSnap.exists()) {
-              const usersObj = usersSnap.val();
-              const matches: Array<{ email: string; password?: string }> = [];
-              for (const uid of Object.keys(usersObj)) {
-                const profile = usersObj[uid]?.profile;
-                if (profile?.username_lower === cleanInput.toLowerCase() && profile?.email) {
-                  matches.push({ email: profile.email, password: profile.password });
-                }
-              }
-              if (matches.length === 1) {
-                foundEmail = matches[0].email;
-              } else if (matches.length > 1) {
-                const passMatch = matches.find((m) => m.password === password);
-                foundEmail = passMatch ? passMatch.email : matches[0].email;
-              }
-            }
-
-            if (!foundEmail) {
-              const snap = await withTimeout(
-                get(ref(rtdb, `usernames/${cleanInput.toLowerCase()}`)),
-                2000,
-                null
-              );
-              if (snap && snap.exists() && snap.val()?.email) {
-                foundEmail = snap.val().email;
-              }
-            }
-          }
-          // Fallback to Firestore if needed
-          if (!foundEmail && db) {
             const snap = await withTimeout(
-              getDoc(doc(db, 'usernames', cleanInput.toLowerCase())),
-              2500,
+              get(ref(rtdb, `usernames/${cleanInput.toLowerCase()}`)),
+              1500,
               null
             );
-            if (snap && snap.exists() && snap.data()?.email) {
-              foundEmail = snap.data().email;
+            if (snap && snap.exists() && snap.val()?.email) {
+              foundEmail = snap.val().email;
             }
           }
 
@@ -337,7 +331,7 @@ export const firebaseService = {
         localAuth.setCurrentUser(account);
         return account;
       } catch (err: unknown) {
-        // If password was updated/reset locally and matches, log in successfully
+        // Fallback for locally saved numeric accounts
         if (localMatch && localMatch.password === password) {
           const account: UserAccount = {
             id: localMatch.id,
@@ -347,18 +341,15 @@ export const firebaseService = {
           localAuth.setCurrentUser(account);
           return account;
         }
-        // If Firebase rejects credentials or requires provider activation
         throw err;
       }
     }
 
-    // Local fallback
     return localAuth.login(cleanInput, password);
   },
 
   /**
-   * Verify if an email address belongs to a registered account in local storage, RTDB, or Firestore.
-   * Throws an error if the email is not registered, preventing reset links from being sent to fake/example emails.
+   * Verify if an email address belongs to a registered account.
    */
   async verifyRegisteredEmail(email: string): Promise<{ uid?: string; email: string; username?: string }> {
     const cleanEmail = email.trim().toLowerCase();
@@ -366,7 +357,7 @@ export const firebaseService = {
       throw new Error('Please enter a valid email address');
     }
 
-    // 1. Check local storage registry
+    // 1. Check local storage
     const localUsers = localAuth.getStoredUsers();
     const localMatch = localUsers.find(
       (u) => u.email && u.email.toLowerCase() === cleanEmail
@@ -379,13 +370,13 @@ export const firebaseService = {
       };
     }
 
-    // 2. Check Realtime Database
+    // 2. Direct point query on Realtime Database
     if (rtdb) {
       try {
         const sanitized = cleanEmail.replace(/\./g, ',');
         const emailSnap = await withTimeout(
           get(ref(rtdb, `emails/${sanitized}`)),
-          2500,
+          1500,
           null
         );
         if (emailSnap && emailSnap.exists()) {
@@ -394,42 +385,6 @@ export const firebaseService = {
             uid: val?.uid,
             email: val?.email || cleanEmail,
             username: val?.username || cleanEmail.split('@')[0],
-          };
-        }
-
-        // Search in users node if not indexed
-        const usersSnap = await withTimeout(get(ref(rtdb, 'users')), 2500, null);
-        if (usersSnap && usersSnap.exists()) {
-          const usersObj = usersSnap.val();
-          for (const uid of Object.keys(usersObj)) {
-            const profile = usersObj[uid]?.profile;
-            if (profile?.email && profile.email.toLowerCase() === cleanEmail) {
-              return {
-                uid,
-                email: profile.email,
-                username: profile.username || toTitleCase(cleanEmail.split('@')[0]),
-              };
-            }
-          }
-        }
-      } catch {
-        // continue
-      }
-    }
-
-    // 3. Check Firestore
-    if (db) {
-      try {
-        const docSnap = await withTimeout(
-          getDoc(doc(db, 'emails', cleanEmail)),
-          2500,
-          null
-        );
-        if (docSnap && docSnap.exists() && docSnap.data()?.email) {
-          return {
-            uid: docSnap.data().uid,
-            email: docSnap.data().email,
-            username: docSnap.data().username,
           };
         }
       } catch {
@@ -441,7 +396,7 @@ export const firebaseService = {
   },
 
   /**
-   * Look up registered email from Username in Firestore or local database.
+   * Look up registered email from Username.
    */
   async lookupEmailByUsername(usernameOrEmail: string): Promise<string> {
     const clean = usernameOrEmail.trim().toLowerCase();
@@ -457,11 +412,11 @@ export const firebaseService = {
       return user.email;
     }
 
-    // 2. Query Realtime Database with timeout
+    // 2. Point query on Realtime Database
     if (rtdb) {
       const snap = await withTimeout(
         get(ref(rtdb, `usernames/${clean}`)),
-        2500,
+        1500,
         null
       );
       if (snap && snap.exists() && snap.val()?.email) {
@@ -469,23 +424,11 @@ export const firebaseService = {
       }
     }
 
-    // 3. Query Firestore with timeout
-    if (this.isConfigured() && db) {
-      const docSnap = await withTimeout(
-        getDoc(doc(db, 'usernames', clean)),
-        2500,
-        null
-      );
-      if (docSnap && docSnap.exists() && docSnap.data()?.email) {
-        return docSnap.data().email;
-      }
-    }
-
     throw new Error(`No account found for username "${usernameOrEmail}". Please check your username or register.`);
   },
 
   /**
-   * Send Password Reset Email strictly to a verified registered email address.
+   * Send Password Reset Email to registered email.
    */
   async sendResetLink(emailInput: string): Promise<{ email: string; username?: string }> {
     const verified = await this.verifyRegisteredEmail(emailInput);
@@ -501,7 +444,7 @@ export const firebaseService = {
   },
 
   /**
-   * Update password directly in database (localAuth + RTDB) for the verified email.
+   * Update password directly in database (localAuth + RTDB).
    */
   async updatePasswordForEmail(emailInput: string, newPass: string): Promise<void> {
     const cleanEmail = emailInput.trim().toLowerCase();
@@ -509,11 +452,10 @@ export const firebaseService = {
       throw new Error('New password must be at least 6 characters');
     }
 
-    // 1. Update in local storage
+    // Update in local storage
     try {
       localAuth.resetPassword(cleanEmail, newPass);
     } catch {
-      // If user was in cloud but not yet in localStorage, save user record locally
       const users = localAuth.getStoredUsers();
       users.push({
         id: 'usr_' + Date.now(),
@@ -524,7 +466,7 @@ export const firebaseService = {
       localAuth.saveUsers(users);
     }
 
-    // 2. Update in Realtime Database
+    // Update in Realtime Database
     if (rtdb) {
       try {
         const sanitized = cleanEmail.replace(/\./g, ',');
@@ -532,17 +474,6 @@ export const firebaseService = {
         if (emailSnap.exists() && emailSnap.val()?.uid) {
           const uid = emailSnap.val().uid;
           await set(ref(rtdb, `users/${uid}/profile/password`), newPass);
-        } else {
-          // Check users node
-          const usersSnap = await get(ref(rtdb, 'users'));
-          if (usersSnap.exists()) {
-            const usersObj = usersSnap.val();
-            for (const uid of Object.keys(usersObj)) {
-              if (usersObj[uid]?.profile?.email?.toLowerCase() === cleanEmail) {
-                await set(ref(rtdb, `users/${uid}/profile/password`), newPass);
-              }
-            }
-          }
         }
       } catch (err) {
         console.warn('RTDB password update notice:', err);
@@ -566,12 +497,11 @@ export const firebaseService = {
   },
 
   /**
-   * Confirm Password Reset with oobCode and new password.
+   * Confirm Password Reset with oobCode.
    */
   async confirmReset(oobCode: string, newPass: string): Promise<void> {
     if (this.isConfigured() && auth) {
       await confirmPasswordReset(auth, oobCode, newPass);
-      return;
     }
   },
 
@@ -594,147 +524,84 @@ export const firebaseService = {
   },
 
   /**
-   * Save / Sync friends and debt tracker data to cloud (Realtime Database & Firestore).
+   * Instant cloud push to Realtime Database.
+   * Sends data over active WebSocket directly within milliseconds.
    */
   async syncFriends(userId: string, friends: Friend[]): Promise<void> {
-    if (!userId) return;
+    if (!userId || !rtdb) return;
     const cleanFriends = JSON.parse(JSON.stringify(friends));
     const payload = {
       friends: cleanFriends,
       updatedAt: new Date().toISOString(),
     };
 
-    // 1. Primary: Firebase Realtime Database
-    if (rtdb) {
-      withTimeout(
-        set(ref(rtdb, `users/${userId}/tracker`), payload),
-        3000,
-        null
-      ).catch(() => {});
-    }
-
-    // 2. Secondary fallback: Cloud Firestore
-    if (db) {
-      withTimeout(
-        setDoc(
-          doc(db, 'users', userId, 'data', 'tracker'),
-          payload,
-          { merge: true }
-        ),
-        3000,
-        null
-      ).catch(() => {});
-    }
+    set(ref(rtdb, `users/${userId}/tracker`), payload).catch((err) => {
+      console.warn('Realtime Database sync warning:', err);
+    });
   },
 
   /**
-   * Fetch friends from cloud database.
+   * Fetch friends from cloud database with automatic array normalization.
    */
   async loadFriendsFromCloud(userId: string): Promise<Friend[] | null> {
-    if (!userId) return null;
+    if (!userId || !rtdb) return null;
 
-    // 1. Try Firebase Realtime Database
-    if (rtdb) {
-      try {
-        const snap = await withTimeout(
-          get(ref(rtdb, `users/${userId}/tracker`)),
-          2500,
-          null
-        );
-        if (snap && snap.exists()) {
-          const val = snap.val();
-          if (val && Array.isArray(val.friends)) {
-            return val.friends as Friend[];
-          }
-        }
-      } catch {
-        // fallback
+    try {
+      const snap = await withTimeout(
+        get(ref(rtdb, `users/${userId}/tracker`)),
+        1500,
+        null
+      );
+      if (snap && snap.exists()) {
+        const val = snap.val();
+        return normalizeFriends(val?.friends);
       }
-    }
-
-    // 2. Try Firestore fallback
-    if (db) {
-      try {
-        const snap = await withTimeout(
-          getDoc(doc(db, 'users', userId, 'data', 'tracker')),
-          2500,
-          null
-        );
-        if (snap && snap.exists() && snap.data()?.friends) {
-          return snap.data()?.friends as Friend[];
-        }
-      } catch {
-        // graceful offline fallback
-      }
+    } catch {
+      // fallback
     }
     return null;
   },
 
   /**
    * Real-time listener for cloud changes.
-   * Enables immediate multi-device sync and guarantees updates without data loss.
+   * Fires instantaneously whenever data changes on any device.
    */
   subscribeFriends(userId: string, onUpdate: (friends: Friend[]) => void): () => void {
-    if (!userId) return () => {};
+    if (!userId || !rtdb) return () => {};
 
-    // 1. Primary: Firebase Realtime Database real-time listener
-    if (rtdb) {
-      try {
-        const trackerRef = ref(rtdb, `users/${userId}/tracker`);
-        const unsubscribeRtdb = onValue(
-          trackerRef,
-          (snap) => {
-            if (snap.exists()) {
-              const val = snap.val();
-              if (val && Array.isArray(val.friends)) {
-                onUpdate(val.friends as Friend[]);
-              }
-            }
-          },
-          (err) => {
-            console.warn('Realtime Database sync notice:', err);
+    try {
+      const trackerRef = ref(rtdb, `users/${userId}/tracker`);
+      const unsubscribeRtdb = onValue(
+        trackerRef,
+        (snap) => {
+          if (snap.exists()) {
+            const val = snap.val();
+            const friends = normalizeFriends(val?.friends);
+            onUpdate(friends);
+          } else {
+            onUpdate([]);
           }
-        );
-        return () => {
-          unsubscribeRtdb();
-        };
-      } catch {
-        // Fallback
-      }
+        },
+        (err) => {
+          console.warn('Realtime Database subscription notice:', err);
+        }
+      );
+      return () => {
+        unsubscribeRtdb();
+      };
+    } catch {
+      return () => {};
     }
-
-    // 2. Secondary fallback: Firestore listener
-    if (db) {
-      try {
-        const unsubscribe = onSnapshot(
-          doc(db, 'users', userId, 'data', 'tracker'),
-          (snap) => {
-            if (snap.exists() && snap.data()?.friends) {
-              const cloudFriends = snap.data().friends as Friend[];
-              onUpdate(cloudFriends);
-            }
-          },
-          (err) => {
-            console.warn('Real-time sync notice:', err);
-          }
-        );
-        return unsubscribe;
-      } catch {
-        // Fallback
-      }
-    }
-    return () => {};
   },
 
   /**
-   * If the cloud Realtime Database is empty (i.e. was reset),
-   * purge stale local storage accounts so the browser starts completely fresh.
+   * Reconcile local storage with cloud on load.
    */
   async reconcileLocalAccountsWithCloud(): Promise<void> {
     if (!rtdb) return;
     try {
-      const usersSnap = await withTimeout(get(ref(rtdb, 'users')), 2000, null);
-      if (usersSnap && !usersSnap.exists()) {
+      const usernamesSnap = await withTimeout(get(ref(rtdb, 'usernames')), 1200, null);
+      if (usernamesSnap && !usernamesSnap.exists()) {
         localAuth.saveUsers([]);
       }
     } catch {
