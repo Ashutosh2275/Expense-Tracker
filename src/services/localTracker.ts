@@ -85,9 +85,9 @@ export const localTracker = {
     localStorage.setItem(getStorageKey(userId), JSON.stringify(friends));
   },
 
-  saveFriends(userId: string, friends: Friend[]): void {
+  saveFriends(userId: string, friends: Friend[], username?: string): void {
     this.saveFriendsLocalOnly(userId, friends);
-    firebaseService.syncFriends(userId, friends).catch(() => {});
+    firebaseService.syncFriends(userId, friends, username).catch(() => {});
   },
 
   addFriend(userId: string, name: string, initialBalance: number = 0, initialPurpose?: string): Friend {

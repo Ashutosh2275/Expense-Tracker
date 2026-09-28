@@ -99,14 +99,14 @@ export const SinglePageApp: React.FC = () => {
   const [resetLinkUrl, setResetLinkUrl] = useState<string | null>(null);
   const [resetError, setResetError] = useState<string | null>(null);
 
-  const loadFriends = async (userId: string) => {
+  const loadFriends = async (userId: string, username?: string) => {
     // 1. Instant local render from persistent storage (0ms)
     const list = localTracker.getFriends(userId);
     setFriends(list);
 
     // 2. Fetch fresh cloud state without risking overwriting newer data
     try {
-      const cloudFriends = await firebaseService.loadFriendsFromCloud(userId);
+      const cloudFriends = await firebaseService.loadFriendsFromCloud(userId, username);
       if (Array.isArray(cloudFriends)) {
         localTracker.saveFriendsLocalOnly(userId, cloudFriends);
         setFriends(cloudFriends);
@@ -124,15 +124,19 @@ export const SinglePageApp: React.FC = () => {
       return;
     }
     setCurrentUser(user);
-    loadFriends(user.id);
+    loadFriends(user.id, user.username);
 
-    // Real-time synchronization from cloud Realtime Database
-    const unsubscribe = firebaseService.subscribeFriends(user.id, (cloudFriends) => {
-      if (Array.isArray(cloudFriends)) {
-        localTracker.saveFriendsLocalOnly(user.id, cloudFriends);
-        setFriends(cloudFriends);
-      }
-    });
+    // Real-time synchronization across all devices (iPhone, Android, Desktop, etc.)
+    const unsubscribe = firebaseService.subscribeFriends(
+      user.id,
+      (cloudFriends) => {
+        if (Array.isArray(cloudFriends)) {
+          localTracker.saveFriendsLocalOnly(user.id, cloudFriends);
+          setFriends(cloudFriends);
+        }
+      },
+      user.username
+    );
 
     return () => {
       unsubscribe();

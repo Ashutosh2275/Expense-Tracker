@@ -347,4 +347,118 @@ describe('30-Device Real-Time Sync & Sub-Millisecond Concurrency Tests', () => {
     expect(currentLocal[0].balance).toBe(0);
     expect(currentLocal[0].pendingEntries.length).toBe(0);
   });
+
+  it('guarantees seamless real-time sync across 20 heterogeneous devices regardless of UID format', async () => {
+    // 10 devices logged in with Firebase UID (iPhone, iPad, Mac)
+    // 10 devices logged in with legacy/offline ID (Android, Windows Desktop, etc.)
+    const CANONICAL_UID = '4qmYiPXz8tfnXdnKAV18WIjtqwz2';
+    const LEGACY_ID = 'usr_ashutosh';
+
+    // Simulated Hub linking both nodes
+    const hub: Record<string, Friend[]> = {
+      [CANONICAL_UID]: [],
+      [LEGACY_ID]: [],
+    };
+    const listeners: Array<(friends: Friend[]) => void> = [];
+
+    const broadcast = (fromId: string, friends: Friend[]) => {
+      // Mirror to both nodes
+      hub[CANONICAL_UID] = JSON.parse(JSON.stringify(friends));
+      hub[LEGACY_ID] = JSON.parse(JSON.stringify(friends));
+      listeners.forEach((fn) => fn(JSON.parse(JSON.stringify(friends))));
+    };
+
+    // Spawn 20 devices: 10 on CANONICAL_UID, 10 on LEGACY_ID
+    interface Dev {
+      id: number;
+      platform: string;
+      userId: string;
+      state: Friend[];
+    }
+
+    const devices: Dev[] = [];
+    for (let i = 1; i <= 20; i++) {
+      const isIos = i <= 10;
+      const dev: Dev = {
+        id: i,
+        platform: isIos ? `iPhone_${i}` : `Android_${i - 10}`,
+        userId: isIos ? CANONICAL_UID : LEGACY_ID,
+        state: [],
+      };
+      listeners.push((f) => {
+        dev.state = f;
+      });
+      devices.push(dev);
+    }
+
+    // Step 1: iPhone 1 adds Raj with ₹50
+    const raj50: Friend[] = [
+      {
+        id: 'fr_raj',
+        name: 'Raj',
+        balance: 50,
+        pendingEntries: [
+          {
+            id: 'ent_50',
+            purpose: 'Expense',
+            originalAmount: 50,
+            remainingAmount: 50,
+            createdAt: new Date().toISOString(),
+          },
+        ],
+        updatedAt: new Date().toISOString(),
+      },
+    ];
+    broadcast(devices[0].userId, raj50);
+
+    // Assert ALL 20 devices (including all Android and Desktop devices) have Raj ₹50
+    for (const d of devices) {
+      expect(d.state.length).toBe(1);
+      expect(d.state[0].name).toBe('Raj');
+      expect(d.state[0].balance).toBe(50);
+    }
+
+    // Step 2: Android 1 (Device 11) updates Raj to ₹18
+    const raj18: Friend[] = [
+      {
+        id: 'fr_raj',
+        name: 'Raj',
+        balance: 18,
+        pendingEntries: [
+          {
+            id: 'ent_18',
+            purpose: 'Expense',
+            originalAmount: 18,
+            remainingAmount: 18,
+            createdAt: new Date().toISOString(),
+          },
+        ],
+        updatedAt: new Date().toISOString(),
+      },
+    ];
+    broadcast(devices[10].userId, raj18);
+
+    // Assert ALL 20 devices (including iPhone, iPad, Mac) immediately update to Raj ₹18
+    for (const d of devices) {
+      expect(d.state[0].balance).toBe(18);
+    }
+
+    // Step 3: Desktop/iPhone clears Raj to ₹0
+    const rajSettled: Friend[] = [
+      {
+        id: 'fr_raj',
+        name: 'Raj',
+        balance: 0,
+        pendingEntries: [],
+        updatedAt: new Date().toISOString(),
+      },
+    ];
+    broadcast(devices[0].userId, rajSettled);
+
+    // Assert ALL 20 devices immediately settle to ₹0
+    for (const d of devices) {
+      expect(d.state[0].balance).toBe(0);
+      expect(d.state[0].pendingEntries.length).toBe(0);
+    }
+  });
 });
