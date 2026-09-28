@@ -1,18 +1,15 @@
-# Dependencies
-node_modules
-.pnp
-.pnp.js
-
-# Production build outputs
-dist
-dist-ssr
-
-# Environment variables, credentials, and secrets
+# ==========================================
+# STRICT ENVIRONMENT & CREDENTIALS PROTECTION
+# NEVER COMMIT .env OR ANY SECRETS
+# ==========================================
 .env
-.env.*
+.env*
 .env.local
+.env.development
 .env.development.local
+.env.test
 .env.test.local
+.env.production
 .env.production.local
 *.env
 *.env.*
@@ -30,11 +27,26 @@ service-account*.json
 google-services.json
 GoogleService-Info.plist
 
-# Keep example environment template public
+# Public template only
 !.env.example
 
+# ==========================================
+# Dependencies
+# ==========================================
+node_modules/
+.pnp
+.pnp.js
+
+# ==========================================
+# Production build outputs
+# ==========================================
+dist/
+dist-ssr/
+
+# ==========================================
 # Logs
-logs
+# ==========================================
+logs/
 *.log
 npm-debug.log*
 yarn-debug.log*
@@ -42,22 +54,28 @@ yarn-error.log*
 pnpm-debug.log*
 lerna-debug.log*
 
+# ==========================================
 # Editor and IDE directories
+# ==========================================
 .vscode/*
 !.vscode/extensions.json
-.idea
+.idea/
 *.suo
 *.ntvs*
 *.njsproj
 *.sln
 *.sw?
 
+# ==========================================
 # OS generated files
+# ==========================================
 .DS_Store
 Thumbs.db
 ehthumbs.db
 
+# ==========================================
 # Test coverage & caches
-coverage
-.cache
-.turbo
+# ==========================================
+coverage/
+.cache/
+.turbo/
