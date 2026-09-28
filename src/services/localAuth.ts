@@ -76,7 +76,12 @@ export const localAuth = {
       const username = toTitleCase(canonical ? canonical.username : sessionUser.username);
       const id = canonical ? canonical.id : sessionUser.id;
 
-      return { id, username, password: canonical?.password || sessionUser.password };
+      return {
+        id,
+        username,
+        email: canonical?.email || sessionUser.email,
+        password: canonical?.password || sessionUser.password,
+      };
     } catch {
       return null;
     }

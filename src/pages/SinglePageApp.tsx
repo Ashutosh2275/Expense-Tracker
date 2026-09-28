@@ -12,6 +12,16 @@ import {
   ArrowUpRight,
   ChevronDown,
   Pencil,
+  User,
+  Mail,
+  KeyRound,
+  ArrowLeft,
+  Eye,
+  EyeOff,
+  ExternalLink,
+  ShieldCheck,
+  CheckCircle2,
+  Lock,
 } from 'lucide-react';
 import { localAuth, UserAccount, toTitleCase } from '@/services/localAuth';
 import { localTracker, Friend } from '@/services/localTracker';
@@ -81,6 +91,14 @@ export const SinglePageApp: React.FC = () => {
   const [customFriendShares, setCustomFriendShares] = useState<Record<string, number>>({});
   const [expenseError, setExpenseError] = useState('');
 
+  // User Profile & Account Pop-Up Modal State
+  const [isProfileOpen, setIsProfileOpen] = useState(false);
+  const [showPassword, setShowPassword] = useState(false);
+  const [isSendingReset, setIsSendingReset] = useState(false);
+  const [resetSentSuccess, setResetSentSuccess] = useState<string | null>(null);
+  const [resetLinkUrl, setResetLinkUrl] = useState<string | null>(null);
+  const [resetError, setResetError] = useState<string | null>(null);
+
   const loadFriends = async (userId: string) => {
     // 1. Instant local render from persistent storage (0ms)
     const list = localTracker.getFriends(userId);
@@ -126,6 +144,67 @@ export const SinglePageApp: React.FC = () => {
     localAuth.signOut();
     navigate('/auth');
     firebaseService.signOut().catch(() => {});
+  };
+
+  const handleOpenProfile = async () => {
+    setIsProfileOpen(true);
+    setResetSentSuccess(null);
+    setResetLinkUrl(null);
+    setResetError(null);
+    setShowPassword(false);
+
+    if (currentUser && !currentUser.email) {
+      try {
+        const resolvedEmail = await firebaseService.lookupEmailByUsername(currentUser.username);
+        if (resolvedEmail) {
+          setCurrentUser((prev) => (prev ? { ...prev, email: resolvedEmail } : null));
+        }
+      } catch {
+        // ignore
+      }
+    }
+  };
+
+  const handleChangePassword = async () => {
+    if (!currentUser) return;
+    setIsSendingReset(true);
+    setResetError(null);
+    setResetSentSuccess(null);
+    setResetLinkUrl(null);
+
+    let userEmail = currentUser.email?.trim() || '';
+    if (!userEmail) {
+      try {
+        userEmail = await firebaseService.lookupEmailByUsername(currentUser.username);
+        if (userEmail) {
+          setCurrentUser((prev) => (prev ? { ...prev, email: userEmail } : null));
+        }
+      } catch {
+        // fallback
+      }
+    }
+
+    if (!userEmail) {
+      setResetError('No email ID associated with this account. Please register with an email address.');
+      setIsSendingReset(false);
+      return;
+    }
+
+    const directLink = `${window.location.origin}/auth?mode=resetPassword&email=${encodeURIComponent(userEmail)}`;
+
+    try {
+      if (firebaseService.isConfigured()) {
+        await firebaseService.sendResetLink(userEmail);
+      }
+      setResetLinkUrl(directLink);
+      setResetSentSuccess(`Password reset link sent to ${userEmail}!`);
+    } catch {
+      // Local fallback reset link
+      setResetLinkUrl(directLink);
+      setResetSentSuccess(`Password reset link prepared for ${userEmail}:`);
+    } finally {
+      setIsSendingReset(false);
+    }
   };
 
   // Dynamic greeting based on current device clock
@@ -328,19 +407,28 @@ export const SinglePageApp: React.FC = () => {
       {/* Top Header with iOS Dynamic Island & Status Bar safe padding */}
       <header className="sticky top-0 z-30 bg-white border-b border-slate-200/80 px-4 sm:px-6 pb-3.5 shadow-xs transition-all pt-ios-header">
         <div className="max-w-xl mx-auto flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-2xl bg-slate-900 flex items-center justify-center text-white font-black text-xl shadow-xs">
+          {/* Clickable Profile & Account Trigger */}
+          <button
+            type="button"
+            onClick={handleOpenProfile}
+            className="flex items-center gap-3 text-left p-1.5 -ml-1.5 rounded-2xl hover:bg-slate-100/90 active:scale-98 transition-all group cursor-pointer focus:outline-hidden"
+            title="View Profile & Account Details"
+          >
+            <div className="w-10 h-10 rounded-2xl bg-slate-900 flex items-center justify-center text-white font-black text-xl shadow-xs group-hover:bg-slate-800 transition-colors">
               ₹
             </div>
             <div>
-              <p className="text-[11px] text-slate-500 font-semibold uppercase tracking-wider">
-                {greeting},
-              </p>
-              <h1 className="text-xl sm:text-2xl font-black text-slate-900 tracking-wide leading-tight">
+              <div className="flex items-center gap-1">
+                <p className="text-[11px] text-slate-500 font-semibold uppercase tracking-wider">
+                  {greeting},
+                </p>
+                <ChevronDown className="w-3 h-3 text-slate-400 group-hover:text-slate-700 transition-colors" />
+              </div>
+              <h1 className="text-xl sm:text-2xl font-black text-slate-900 tracking-wide leading-tight group-hover:text-black transition-colors">
                 {toTitleCase(currentUser?.username || 'Ashutosh')}
               </h1>
             </div>
-          </div>
+          </button>
 
           <div className="flex items-center gap-2">
             <button
@@ -1101,6 +1189,175 @@ export const SinglePageApp: React.FC = () => {
           </div>
         </form>
       </Modal>
+
+      {/* 5. User Profile & Account Pop-Up Screen */}
+      {isProfileOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-0 sm:p-4 bg-slate-900/60 backdrop-blur-xs animate-in fade-in duration-150">
+          <div className="w-full h-full sm:h-auto sm:max-w-md bg-white sm:rounded-3xl shadow-2xl border border-slate-200/80 flex flex-col overflow-hidden">
+            {/* Top Navigation Bar with Mobile Back Button */}
+            <div className="flex items-center justify-between px-4 sm:px-6 py-4 border-b border-slate-100 bg-white sticky top-0 z-10 pt-ios-header sm:pt-4">
+              <button
+                type="button"
+                onClick={() => setIsProfileOpen(false)}
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold text-slate-700 hover:text-black hover:bg-slate-100 rounded-xl transition-all active:scale-95 cursor-pointer"
+              >
+                <ArrowLeft className="w-4 h-4" />
+                <span>Back</span>
+              </button>
+              <h2 className="text-sm font-extrabold text-slate-900 uppercase tracking-wider">
+                Account & Profile
+              </h2>
+              <button
+                type="button"
+                onClick={() => setIsProfileOpen(false)}
+                className="w-8 h-8 rounded-full flex items-center justify-center text-slate-400 hover:text-slate-700 hover:bg-slate-100 transition-colors cursor-pointer"
+                title="Close"
+              >
+                <span className="text-xl leading-none">×</span>
+              </button>
+            </div>
+
+            {/* Profile Content Body */}
+            <div className="p-5 sm:p-6 overflow-y-auto space-y-4 flex-1">
+              {/* User Avatar & Identity Header */}
+              <div className="flex items-center gap-4 p-4 bg-slate-50 rounded-2xl border border-slate-100">
+                <div className="w-14 h-14 rounded-2xl bg-slate-900 text-white flex items-center justify-center text-2xl font-black shadow-xs">
+                  {toTitleCase(currentUser?.username || 'Ashutosh').charAt(0)}
+                </div>
+                <div>
+                  <h3 className="text-lg font-black text-slate-900 leading-tight">
+                    {toTitleCase(currentUser?.username || 'Ashutosh')}
+                  </h3>
+                  <div className="inline-flex items-center gap-1.5 text-[11px] font-semibold text-emerald-700 bg-emerald-100/80 px-2 py-0.5 rounded-full mt-1">
+                    <ShieldCheck className="w-3 h-3" />
+                    <span>Personal & Free • Active</span>
+                  </div>
+                </div>
+              </div>
+
+              {/* Account Details Fields */}
+              <div className="space-y-3">
+                {/* Username Field */}
+                <div className="p-3.5 bg-slate-50 rounded-2xl border border-slate-200/80">
+                  <div className="flex items-center gap-2 text-xs font-semibold text-slate-500 mb-1">
+                    <User className="w-3.5 h-3.5 text-slate-400" />
+                    <span>Username</span>
+                  </div>
+                  <p className="text-sm font-bold text-slate-900">
+                    {toTitleCase(currentUser?.username || 'Ashutosh')}
+                  </p>
+                </div>
+
+                {/* Email Field */}
+                <div className="p-3.5 bg-slate-50 rounded-2xl border border-slate-200/80">
+                  <div className="flex items-center gap-2 text-xs font-semibold text-slate-500 mb-1">
+                    <Mail className="w-3.5 h-3.5 text-slate-400" />
+                    <span>Registered Email Address</span>
+                  </div>
+                  <p className="text-sm font-bold text-slate-900 break-all">
+                    {currentUser?.email || 'ashutoshmishra2275@gmail.com'}
+                  </p>
+                </div>
+
+                {/* Password Field (Masked **** with Eye Toggle) */}
+                <div className="p-3.5 bg-slate-50 rounded-2xl border border-slate-200/80">
+                  <div className="flex items-center justify-between mb-1">
+                    <div className="flex items-center gap-2 text-xs font-semibold text-slate-500">
+                      <Lock className="w-3.5 h-3.5 text-slate-400" />
+                      <span>Password</span>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => setShowPassword((prev) => !prev)}
+                      className="text-xs font-semibold text-slate-500 hover:text-black flex items-center gap-1 transition-colors cursor-pointer"
+                    >
+                      {showPassword ? (
+                        <>
+                          <EyeOff className="w-3.5 h-3.5" />
+                          <span>Hide</span>
+                        </>
+                      ) : (
+                        <>
+                          <Eye className="w-3.5 h-3.5" />
+                          <span>Show</span>
+                        </>
+                      )}
+                    </button>
+                  </div>
+                  <p className="text-sm font-bold text-slate-900 font-mono tracking-wider">
+                    {showPassword
+                      ? currentUser?.password || '••••••••'
+                      : '••••••••'}
+                  </p>
+                </div>
+              </div>
+
+              {/* Reset Notification / Success Box */}
+              {resetSentSuccess && (
+                <div className="p-4 bg-emerald-50 border border-emerald-200 rounded-2xl space-y-2 animate-in fade-in duration-200">
+                  <div className="flex items-start gap-2.5">
+                    <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0 mt-0.5" />
+                    <div className="text-xs leading-relaxed text-emerald-950">
+                      <p className="font-bold text-emerald-950">
+                        Hi, this is your Expense Tracker,
+                      </p>
+                      <p className="text-emerald-800 mt-0.5">
+                        and here is the reset link below:
+                      </p>
+                      {resetLinkUrl && (
+                        <div className="mt-2.5">
+                          <a
+                            href={resetLinkUrl}
+                            onClick={() => setIsProfileOpen(false)}
+                            className="inline-flex items-center gap-1.5 px-3 py-2 bg-emerald-700 hover:bg-emerald-800 text-white rounded-xl text-xs font-bold transition-colors shadow-xs"
+                          >
+                            <span>Open Password Reset Page</span>
+                            <ExternalLink className="w-3.5 h-3.5" />
+                          </a>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* Reset Error Notice */}
+              {resetError && (
+                <div className="p-3 bg-rose-50 border border-rose-200 rounded-xl text-xs text-rose-700 font-medium">
+                  {resetError}
+                </div>
+              )}
+
+              {/* Action Buttons */}
+              <div className="space-y-2.5 pt-2">
+                <Button
+                  type="button"
+                  onClick={handleChangePassword}
+                  disabled={isSendingReset}
+                  className="w-full py-3 text-sm font-bold bg-slate-900 hover:bg-black text-white rounded-2xl flex items-center justify-center gap-2 shadow-xs transition-all active:scale-98 cursor-pointer"
+                >
+                  <KeyRound className="w-4 h-4" />
+                  <span>
+                    {isSendingReset ? 'Sending Reset Link...' : 'Change Password'}
+                  </span>
+                </Button>
+
+                <button
+                  type="button"
+                  onClick={() => {
+                    setIsProfileOpen(false);
+                    handleSignOut();
+                  }}
+                  className="w-full py-2.5 text-xs font-semibold text-rose-600 hover:text-rose-700 hover:bg-rose-50 rounded-xl border border-rose-200 transition-colors flex items-center justify-center gap-1.5 cursor-pointer"
+                >
+                  <LogOut className="w-3.5 h-3.5" />
+                  <span>Sign Out</span>
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

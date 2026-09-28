@@ -208,7 +208,7 @@ export const AuthPage: React.FC = () => {
       if (oobCode) {
         await firebaseService.confirmReset(oobCode, newPassword);
       } else if (email.trim()) {
-        localAuth.resetPassword(email.trim(), newPassword);
+        await firebaseService.updatePasswordForEmail(email.trim(), newPassword);
       }
       setSuccessMsg('Your password has been successfully reset! You can now sign in.');
       setTimeout(() => {
@@ -551,6 +551,10 @@ export const AuthPage: React.FC = () => {
                   <ArrowLeft className="w-3.5 h-3.5" />
                   <span>Back to Sign In</span>
                 </button>
+                <div className="p-3.5 bg-slate-100/90 rounded-2xl border border-slate-200 text-xs text-slate-800 leading-relaxed mb-4">
+                  <p className="font-bold text-slate-900">Hi, this is your Expense Tracker,</p>
+                  <p className="text-slate-600 mt-0.5">and here is your reset link below to update your password:</p>
+                </div>
                 <h2 className="text-lg font-black text-slate-900">Set New Password</h2>
                 <p className="text-xs text-slate-500 mt-0.5">
                   Enter your new password and confirm it below.
