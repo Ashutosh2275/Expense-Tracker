@@ -225,7 +225,13 @@ export const AuthPage: React.FC = () => {
   };
 
   return (
-    <div className="min-h-screen bg-slate-50 flex flex-col justify-center py-12 px-4 sm:px-6 lg:px-8 select-none">
+    <div
+      className="min-h-screen bg-slate-50 flex flex-col justify-center px-4 sm:px-6 lg:px-8 select-none"
+      style={{
+        paddingTop: 'calc(env(safe-area-inset-top, 0px) + 2.5rem)',
+        paddingBottom: 'calc(env(safe-area-inset-bottom, 0px) + 2.5rem)',
+      }}
+    >
       {/* Header Logo */}
       <div className="sm:mx-auto sm:w-full sm:max-w-md text-center">
         <div className="w-14 h-14 bg-black text-white rounded-2xl flex items-center justify-center text-2xl font-black mx-auto shadow-md">

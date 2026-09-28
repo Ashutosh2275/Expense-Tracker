@@ -314,9 +314,19 @@ export const SinglePageApp: React.FC = () => {
   };
 
   return (
-    <div className="min-h-screen bg-slate-50 antialiased text-slate-900 pb-20 select-none">
-      {/* Top Header */}
-      <header className="sticky top-0 z-30 bg-white/95 backdrop-blur-md border-b border-slate-200/80 px-4 sm:px-6 py-3.5">
+    <div
+      className="min-h-screen bg-slate-50 antialiased text-slate-900 select-none"
+      style={{
+        paddingBottom: 'calc(env(safe-area-inset-bottom, 0px) + 5rem)',
+      }}
+    >
+      {/* Top Header with iOS Dynamic Island & Status Bar safe padding */}
+      <header
+        className="sticky top-0 z-30 bg-white/95 backdrop-blur-md border-b border-slate-200/80 px-4 sm:px-6 pb-3.5 transition-all"
+        style={{
+          paddingTop: 'calc(env(safe-area-inset-top, 0px) + 0.875rem)',
+        }}
+      >
         <div className="max-w-xl mx-auto flex items-center justify-between">
           <div className="flex items-center gap-3">
             <div className="w-10 h-10 rounded-2xl bg-slate-900 flex items-center justify-center text-white font-black text-xl shadow-xs">
