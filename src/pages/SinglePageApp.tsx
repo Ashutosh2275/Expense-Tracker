@@ -126,6 +126,17 @@ export const SinglePageApp: React.FC = () => {
     setCurrentUser(user);
     loadFriends(user.id, user.username);
 
+    // Auto-upgrade legacy usr_ ID to canonical cloud UID from Firebase
+    if (user.id.startsWith('usr_')) {
+      firebaseService.resolveCanonicalUid(user.username).then((uid) => {
+        if (uid && uid !== user.id) {
+          user.id = uid;
+          localAuth.setCurrentUser(user);
+          setCurrentUser({ ...user });
+        }
+      }).catch(() => {});
+    }
+
     // Real-time synchronization across all devices (iPhone, Android, Desktop, etc.)
     const unsubscribe = firebaseService.subscribeFriends(
       user.id,
@@ -138,8 +149,34 @@ export const SinglePageApp: React.FC = () => {
       user.username
     );
 
+    // Foreground wakeup sync: immediate refresh when switching back to app on iOS PWA or Android
+    const handleForegroundSync = () => {
+      if (document.visibilityState === 'visible') {
+        const u = localAuth.getCurrentUser();
+        if (u) {
+          loadFriends(u.id, u.username);
+        }
+      }
+    };
+
+    window.addEventListener('visibilitychange', handleForegroundSync);
+    window.addEventListener('focus', handleForegroundSync);
+    window.addEventListener('online', handleForegroundSync);
+
+    // High-reliability 4-second safety poll when app is in active view
+    const safetyPollTimer = setInterval(() => {
+      const u = localAuth.getCurrentUser();
+      if (u && document.visibilityState === 'visible') {
+        loadFriends(u.id, u.username);
+      }
+    }, 4000);
+
     return () => {
       unsubscribe();
+      window.removeEventListener('visibilitychange', handleForegroundSync);
+      window.removeEventListener('focus', handleForegroundSync);
+      window.removeEventListener('online', handleForegroundSync);
+      clearInterval(safetyPollTimer);
     };
   }, [navigate]);
 
@@ -251,7 +288,7 @@ export const SinglePageApp: React.FC = () => {
       newPersonBalance,
       newPersonPurpose
     );
-    loadFriends(currentUser.id);
+    loadFriends(currentUser.id, currentUser.username);
 
     setNewPersonName('');
     setNewPersonBalance(0);
@@ -280,7 +317,7 @@ export const SinglePageApp: React.FC = () => {
         adjustModal.amount
       );
     }
-    loadFriends(currentUser.id);
+    loadFriends(currentUser.id, currentUser.username);
 
     setAdjustModal({ isOpen: false, friend: null, type: 'add', amount: 0, purpose: '' });
   };
@@ -290,7 +327,7 @@ export const SinglePageApp: React.FC = () => {
     if (!currentUser) return;
     if (window.confirm(`Remove ${name} from your list?`)) {
       localTracker.deleteFriend(currentUser.id, friendId);
-      loadFriends(currentUser.id);
+      loadFriends(currentUser.id, currentUser.username);
     }
   };
 
@@ -307,7 +344,7 @@ export const SinglePageApp: React.FC = () => {
       editEntryModal.amount,
       editEntryModal.purpose
     );
-    loadFriends(currentUser.id);
+    loadFriends(currentUser.id, currentUser.username);
     setEditEntryModal({ isOpen: false, friendId: '', entryId: '', purpose: '', amount: 0 });
   };
 
@@ -315,7 +352,7 @@ export const SinglePageApp: React.FC = () => {
     if (!currentUser) return;
     if (window.confirm('Delete this expense entry?')) {
       localTracker.deletePendingEntry(currentUser.id, friendId, entryId);
-      loadFriends(currentUser.id);
+      loadFriends(currentUser.id, currentUser.username);
     }
   };
 
@@ -397,7 +434,7 @@ export const SinglePageApp: React.FC = () => {
     }
 
     localTracker.addSharedExpense(currentUser.id, expenseDesc, splits);
-    loadFriends(currentUser.id);
+    loadFriends(currentUser.id, currentUser.username);
     setIsSharedExpenseOpen(false);
   };
 
