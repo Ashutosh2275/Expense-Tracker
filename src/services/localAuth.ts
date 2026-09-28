@@ -20,17 +20,44 @@ export function toTitleCase(str: string): string {
     .replace(/(^|\s)\S/g, (char) => char.toUpperCase());
 }
 
+let cachedUsers: UserAccount[] | null = null;
+let cachedRaw: string | null = null;
+const userIndex = new Map<string, UserAccount>();
+
+function refreshIndex(users: UserAccount[]) {
+  userIndex.clear();
+  for (const u of users) {
+    if (u.username) userIndex.set(u.username.toLowerCase(), u);
+    if (u.email) userIndex.set(u.email.toLowerCase(), u);
+  }
+}
+
 export function getStoredUsers(): UserAccount[] {
   try {
     const raw = localStorage.getItem(USERS_STORAGE_KEY);
-    return raw ? JSON.parse(raw) : [];
+    if (!raw) {
+      cachedUsers = [];
+      cachedRaw = null;
+      userIndex.clear();
+      return [];
+    }
+    if (raw === cachedRaw && cachedUsers) {
+      return cachedUsers;
+    }
+    cachedRaw = raw;
+    cachedUsers = JSON.parse(raw);
+    refreshIndex(cachedUsers || []);
+    return cachedUsers || [];
   } catch {
     return [];
   }
 }
 
 export function saveUsers(users: UserAccount[]): void {
-  localStorage.setItem(USERS_STORAGE_KEY, JSON.stringify(users));
+  cachedUsers = users;
+  cachedRaw = JSON.stringify(users);
+  localStorage.setItem(USERS_STORAGE_KEY, cachedRaw);
+  refreshIndex(users);
 }
 
 export const localAuth = {
@@ -43,10 +70,8 @@ export const localAuth = {
       if (!raw) return null;
       const sessionUser: UserAccount = JSON.parse(raw);
       
-      const users = getStoredUsers();
-      const canonical = users.find(
-        (u) => u.username.toLowerCase() === sessionUser.username.toLowerCase()
-      );
+      getStoredUsers();
+      const canonical = userIndex.get(sessionUser.username.toLowerCase());
       
       const username = toTitleCase(canonical ? canonical.username : sessionUser.username);
       const id = canonical ? canonical.id : sessionUser.id;
@@ -160,12 +185,8 @@ export const localAuth = {
     if (!cleanId) throw new Error('Please enter your email or username');
     if (!cleanPass) throw new Error('Please enter your password');
 
-    const users = getStoredUsers();
-    const user = users.find(
-      (u) =>
-        u.username.toLowerCase() === cleanId ||
-        (u.email && u.email.toLowerCase() === cleanId)
-    );
+    getStoredUsers();
+    const user = userIndex.get(cleanId);
 
     if (!user) {
       throw new Error('User not found. Please register first.');

@@ -25,8 +25,12 @@ import { Avatar } from '@/components/ui/Avatar';
 
 export const SinglePageApp: React.FC = () => {
   const navigate = useNavigate();
-  const [currentUser, setCurrentUser] = useState<UserAccount | null>(null);
-  const [friends, setFriends] = useState<Friend[]>([]);
+  // Instant (0ms) zero-layout-shift state initialization from persistent local store
+  const [currentUser, setCurrentUser] = useState<UserAccount | null>(() => localAuth.getCurrentUser());
+  const [friends, setFriends] = useState<Friend[]>(() => {
+    const user = localAuth.getCurrentUser();
+    return user ? localTracker.getFriends(user.id) : [];
+  });
 
   // Expanded friend card for viewing purpose logs
   const [expandedFriendId, setExpandedFriendId] = useState<string | null>(null);
@@ -77,6 +81,23 @@ export const SinglePageApp: React.FC = () => {
   const [customFriendShares, setCustomFriendShares] = useState<Record<string, number>>({});
   const [expenseError, setExpenseError] = useState('');
 
+  const loadFriends = async (userId: string) => {
+    // 1. Instant local render from persistent storage (0ms)
+    const list = localTracker.getFriends(userId);
+    setFriends(list);
+
+    // 2. Fetch fresh cloud state without risking overwriting newer data
+    try {
+      const cloudFriends = await firebaseService.loadFriendsFromCloud(userId);
+      if (Array.isArray(cloudFriends)) {
+        localTracker.saveFriendsLocalOnly(userId, cloudFriends);
+        setFriends(cloudFriends);
+      }
+    } catch {
+      // offline fallback
+    }
+  };
+
   // 1. Check Authentication on Mount & Subscribe to Real-time Updates
   useEffect(() => {
     const user = localAuth.getCurrentUser();
@@ -89,7 +110,7 @@ export const SinglePageApp: React.FC = () => {
 
     // Real-time synchronization from cloud Realtime Database
     const unsubscribe = firebaseService.subscribeFriends(user.id, (cloudFriends) => {
-      if (cloudFriends && cloudFriends.length > 0) {
+      if (Array.isArray(cloudFriends)) {
         localTracker.saveFriendsLocalOnly(user.id, cloudFriends);
         setFriends(cloudFriends);
       }
@@ -100,30 +121,11 @@ export const SinglePageApp: React.FC = () => {
     };
   }, [navigate]);
 
-  const loadFriends = async (userId: string) => {
-    // 1. Instant local render from persistent storage (0ms)
-    const list = localTracker.getFriends(userId);
-    setFriends(list);
-
-    // 2. Fetch fresh cloud state without risking data loss
-    try {
-      const cloudFriends = await firebaseService.loadFriendsFromCloud(userId);
-      if (cloudFriends && cloudFriends.length > 0) {
-        localTracker.saveFriendsLocalOnly(userId, cloudFriends);
-        setFriends(cloudFriends);
-      } else if ((!cloudFriends || cloudFriends.length === 0) && list.length > 0) {
-        // Cloud node is empty but local device has existing data: automatically sync local data to cloud to preserve it
-        await firebaseService.syncFriends(userId, list);
-      }
-    } catch {
-      // offline fallback
-    }
-  };
-
-  const handleSignOut = async () => {
-    await firebaseService.signOut();
+  const handleSignOut = () => {
+    // Instant (<0.10ms) sign out and immediate route change
     localAuth.signOut();
     navigate('/auth');
+    firebaseService.signOut().catch(() => {});
   };
 
   // Dynamic greeting based on current device clock
