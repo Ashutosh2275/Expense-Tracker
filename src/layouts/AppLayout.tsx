@@ -26,12 +26,7 @@ export const AppLayout: React.FC = () => {
         <OfflineBanner />
 
         {/* Mobile Header */}
-        <header
-          className="sm:hidden flex items-center justify-between px-4 pb-3 bg-white/90 backdrop-blur-md border-b border-slate-200/80 sticky top-0 z-20"
-          style={{
-            paddingTop: 'calc(env(safe-area-inset-top, 0px) + 0.75rem)',
-          }}
-        >
+        <header className="sm:hidden flex items-center justify-between px-4 pb-3 bg-white border-b border-slate-200/80 sticky top-0 z-20 pt-ios-header">
           <div className="flex items-center gap-2">
             <div className="w-7 h-7 rounded-lg bg-slate-900 flex items-center justify-center text-white font-bold text-sm">
               ₹

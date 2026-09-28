@@ -44,3 +44,14 @@
 .pt-safe {
   padding-top: max(0.5rem, env(safe-area-inset-top, 0.5rem));
 }
+
+/* iOS Dynamic Island & Status Bar Header Clearance */
+.pt-ios-header {
+  padding-top: calc(max(env(safe-area-inset-top, 0px), 54px) + 1.25rem);
+}
+
+@media (min-width: 640px) {
+  .pt-ios-header {
+    padding-top: 1rem;
+  }
+}
