@@ -89,7 +89,7 @@ export const SinglePageApp: React.FC = () => {
 
     // Real-time synchronization from cloud Realtime Database
     const unsubscribe = firebaseService.subscribeFriends(user.id, (cloudFriends) => {
-      if (cloudFriends) {
+      if (cloudFriends && cloudFriends.length > 0) {
         localTracker.saveFriendsLocalOnly(user.id, cloudFriends);
         setFriends(cloudFriends);
       }
@@ -101,16 +101,19 @@ export const SinglePageApp: React.FC = () => {
   }, [navigate]);
 
   const loadFriends = async (userId: string) => {
-    // 1. Instant local render (0ms)
+    // 1. Instant local render from persistent storage (0ms)
     const list = localTracker.getFriends(userId);
     setFriends(list);
 
-    // 2. Fetch fresh cloud state
+    // 2. Fetch fresh cloud state without risking data loss
     try {
       const cloudFriends = await firebaseService.loadFriendsFromCloud(userId);
-      if (cloudFriends) {
+      if (cloudFriends && cloudFriends.length > 0) {
         localTracker.saveFriendsLocalOnly(userId, cloudFriends);
         setFriends(cloudFriends);
+      } else if ((!cloudFriends || cloudFriends.length === 0) && list.length > 0) {
+        // Cloud node is empty but local device has existing data: automatically sync local data to cloud to preserve it
+        await firebaseService.syncFriends(userId, list);
       }
     } catch {
       // offline fallback

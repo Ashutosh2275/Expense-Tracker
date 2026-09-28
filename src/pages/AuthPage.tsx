@@ -25,9 +25,8 @@ export const AuthPage: React.FC = () => {
   const [successMsg, setSuccessMsg] = useState('');
   const [isLoading, setIsLoading] = useState(false);
 
-  // Check if opened via email reset link (with oobCode) & reconcile local storage with cloud
+  // Check if opened via email reset link (with oobCode)
   useEffect(() => {
-    firebaseService.reconcileLocalAccountsWithCloud().catch(() => {});
     const oobCode = searchParams.get('oobCode');
     const action = searchParams.get('mode');
     if (oobCode || action === 'resetPassword') {

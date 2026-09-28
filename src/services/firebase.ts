@@ -565,6 +565,7 @@ export const firebaseService = {
   /**
    * Real-time listener for cloud changes.
    * Fires instantaneously whenever data changes on any device.
+   * Never overwrites existing data with empty states on connection initialization.
    */
   subscribeFriends(userId: string, onUpdate: (friends: Friend[]) => void): () => void {
     if (!userId || !rtdb) return () => {};
@@ -577,9 +578,9 @@ export const firebaseService = {
           if (snap.exists()) {
             const val = snap.val();
             const friends = normalizeFriends(val?.friends);
-            onUpdate(friends);
-          } else {
-            onUpdate([]);
+            if (friends && friends.length > 0) {
+              onUpdate(friends);
+            }
           }
         },
         (err) => {
@@ -591,37 +592,6 @@ export const firebaseService = {
       };
     } catch {
       return () => {};
-    }
-  },
-
-  /**
-   * Reconcile local storage with cloud on load.
-   */
-  async reconcileLocalAccountsWithCloud(): Promise<void> {
-    if (!rtdb) return;
-    try {
-      const usernamesSnap = await withTimeout(get(ref(rtdb, 'usernames')), 1200, null);
-      if (usernamesSnap && !usernamesSnap.exists()) {
-        localAuth.saveUsers([]);
-      }
-    } catch {
-      // ignore
-    }
-  },
-
-  /**
-   * Reset the entire database (Realtime Database & local storage).
-   */
-  async resetDatabase(): Promise<void> {
-    if (rtdb) {
-      await Promise.all([
-        set(ref(rtdb, 'users'), null),
-        set(ref(rtdb, 'emails'), null),
-        set(ref(rtdb, 'usernames'), null),
-      ]);
-    }
-    if (typeof localStorage !== 'undefined') {
-      localStorage.clear();
     }
   },
 };
